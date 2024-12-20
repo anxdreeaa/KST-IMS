@@ -1,0 +1,376 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Data.OleDb;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace LoginPanel
+{
+    public partial class Inventory : Form
+    {
+        private OleDbConnection conn;
+        private OleDbDataAdapter adapter;
+        private DataTable dt;
+
+        public Inventory()
+        {
+            InitializeComponent();
+            conn = new OleDbConnection("Provider=Microsoft.ACE.OLEDB.12.0;Data Source=KST IMS DATABASE.accdb");
+        }
+
+        
+
+        private void GetUsers()
+        {
+            try
+            {
+                dt = new DataTable();
+                using (adapter = new OleDbDataAdapter("SELECT * FROM Inventory", conn))
+                {
+                    adapter.Fill(dt);
+                    dgvUser.DataSource = dt;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error: {ex.Message}", "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void btnAdd_Click(object sender, EventArgs e)
+        {
+            
+            if (string.IsNullOrWhiteSpace(tbName.Text) ||
+                string.IsNullOrWhiteSpace(tbQuantity.Text) ||
+                string.IsNullOrWhiteSpace(tbUnitPrice.Text) ||
+                string.IsNullOrWhiteSpace(cbUnit.Text) ||
+                string.IsNullOrWhiteSpace(cbCategory.Text))
+            {
+                MessageBox.Show("Please fill in all required fields.");
+                return;
+            }
+
+            
+            if (!int.TryParse(tbQuantity.Text, out int quantity) || quantity < 0)
+            {
+                MessageBox.Show("Quantity must be a positive integer.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            
+            if (!decimal.TryParse(tbUnitPrice.Text, out decimal unitPrice) || unitPrice < 0)
+            {
+                MessageBox.Show("Unit Price must be a valid non-negative number.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            decimal expenses = CalculateExpenses();
+           
+
+            
+            var confirmResult = MessageBox.Show("Are you sure you want to add this item?", "Confirm Add", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirmResult == DialogResult.Yes)
+            {
+                string insertQuery = "INSERT INTO Inventory ([Item Name], Quantity, Unit, Category, [Date of Stock], [Expiration Date], [Unit Price], Expenses) " +
+                                     "VALUES (@n, @q, @u, @c, @ds, @ed, @up, @e)";
+                try
+                {
+                    using (OleDbCommand cmd = new OleDbCommand(insertQuery, conn))
+                    {
+                        
+                        cmd.Parameters.Add("@n", OleDbType.VarChar).Value = tbName.Text;
+                        cmd.Parameters.Add("@q", OleDbType.Integer).Value = quantity;
+                        cmd.Parameters.Add("@u", OleDbType.VarChar).Value = cbUnit.Text;
+                        cmd.Parameters.Add("@c", OleDbType.VarChar).Value = cbCategory.Text;
+                        cmd.Parameters.Add("@ds", OleDbType.Date).Value = dtpDOS.Value;
+                        cmd.Parameters.Add("@ed", OleDbType.Date).Value = dtpED.Value;
+                        cmd.Parameters.Add("@up", OleDbType.Decimal).Value = unitPrice;
+                        cmd.Parameters.Add("@e", OleDbType.Decimal).Value = expenses;
+
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                        MessageBox.Show("Item added successfully!");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"An error occurred: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                finally
+                {
+                    if (conn.State == ConnectionState.Open)
+                        conn.Close();
+                }
+            }
+
+            GetUsers();
+        }
+
+
+        private void btnClear_Click(object sender, EventArgs e)
+        {
+            tbName.Clear();
+            tbQuantity.Clear();
+            tbUnitPrice.Clear();
+            cbUnit.SelectedIndex = -1;
+            cbCategory.SelectedIndex = -1;
+            dtpDOS.Value = DateTime.Now;
+            dtpED.Value = DateTime.Now;
+        }
+
+        private void btnDelete_Click(object sender, EventArgs e)
+        {
+            if (dgvUser.CurrentRow == null)
+            {
+                MessageBox.Show("Please select a record to delete.", "Delete Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int itemId = Convert.ToInt32(dgvUser.CurrentRow.Cells["Item ID"].Value);
+            string itemname = dgvUser.CurrentRow.Cells["Item Name"].Value.ToString();
+            string category = dgvUser.CurrentRow.Cells["Category"].Value.ToString();
+            int quantity = Convert.ToInt32(dgvUser.CurrentRow.Cells["Quantity"].Value);
+            string unit = dgvUser.CurrentRow.Cells["Unit"].Value.ToString();
+            DateTime dateOfStock = Convert.ToDateTime(dgvUser.CurrentRow.Cells["Date of Stock"].Value);
+            DateTime expirationDate = Convert.ToDateTime(dgvUser.CurrentRow.Cells["Expiration Date"].Value);
+            decimal expenses = Convert.ToDecimal(dgvUser.CurrentRow.Cells["Expenses"].Value);
+
+            var confirmResult = MessageBox.Show("Are you sure you want to delete this item?", "Confirm Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirmResult == DialogResult.Yes)
+            {
+                string insertArchiveQuery = "INSERT INTO Archive ([Item ID], [Item Name], Quantity, Unit, Category, [Date of Stock], [Expiration Date], Expenses, [Deleted Time]) " +
+                                            "VALUES (@id, @name, @quantity, @unit, @category, @dateOfStock, @expirationDate, @expenses, @timestamp)";
+                string deleteFromInventoryQuery = "DELETE FROM Inventory WHERE [Item ID] = @id";
+
+                try
+                {
+                    using (OleDbCommand insertArchiveCmd = new OleDbCommand(insertArchiveQuery, conn))
+                    using (OleDbCommand deleteCmd = new OleDbCommand(deleteFromInventoryQuery, conn))
+                    {
+                        conn.Open();
+
+                        
+                        Console.WriteLine("Inserting to Archive: ID={0}, Name={1}, Quantity={2}, Unit={3}, Category={4}, Date={5}, Expiration={6}, Expenses={7}, Time={8}",
+                            itemId, itemname, quantity, unit, category, dateOfStock, expirationDate, expenses, DateTime.Now);
+
+                        insertArchiveCmd.Parameters.Add("@id", OleDbType.Integer).Value = itemId;
+                        insertArchiveCmd.Parameters.Add("@name", OleDbType.VarChar).Value = itemname;
+                        insertArchiveCmd.Parameters.Add("@quantity", OleDbType.Integer).Value = quantity;
+                        insertArchiveCmd.Parameters.Add("@unit", OleDbType.VarChar).Value = unit;
+                        insertArchiveCmd.Parameters.Add("@category", OleDbType.VarChar).Value = category;
+                        insertArchiveCmd.Parameters.Add("@dateOfStock", OleDbType.Date).Value = dateOfStock;
+                        insertArchiveCmd.Parameters.Add("@expirationDate", OleDbType.Date).Value = expirationDate;
+                        insertArchiveCmd.Parameters.Add("@expenses", OleDbType.Decimal).Value = expenses;
+                        insertArchiveCmd.Parameters.Add("@timestamp", OleDbType.Date).Value = DateTime.Now;
+
+                        
+                        int insertedRows = insertArchiveCmd.ExecuteNonQuery();
+                        Console.WriteLine($"Inserted {insertedRows} row(s) into Archive.");
+
+                        
+                        deleteCmd.Parameters.Add("@id", OleDbType.Integer).Value = itemId;
+                        deleteCmd.ExecuteNonQuery();
+
+                        MessageBox.Show("Item deleted successfully!");
+
+                        foreach (Form form in Application.OpenForms)
+                        {
+                            if (form is Archive archiveForm)
+                            {
+                                archiveForm.RefreshArchive();
+                            }
+                        }
+                        GetUsers();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Error deleting or archiving item: " + ex.Message);
+                }
+                finally
+                {
+                    conn.Close();
+                }
+            }
+        }
+
+
+
+
+        private void btnUpdate_Click(object sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(tbName.Text) ||
+                string.IsNullOrWhiteSpace(tbQuantity.Text) ||
+                string.IsNullOrWhiteSpace(cbUnit.Text) ||
+                string.IsNullOrWhiteSpace(cbCategory.Text) ||
+                string.IsNullOrWhiteSpace(tbUnitPrice.Text))
+            {
+                MessageBox.Show("Please fill in all fields.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!int.TryParse(tbQuantity.Text, out int quantity) || quantity < 0)
+            {
+                MessageBox.Show("Quantity must be a positive integer.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!decimal.TryParse(tbUnitPrice.Text, out decimal unitPrice) || unitPrice < 0)
+            {
+                MessageBox.Show("Unit Price must be a valid non-negative number.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            
+            decimal expenses = CalculateExpenses();
+
+            if (dgvUser.CurrentRow == null)
+            {
+                MessageBox.Show("Please select an item to update.", "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int itemId = Convert.ToInt32(dgvUser.CurrentRow.Cells["Item ID"].Value);
+
+            var confirmResult = MessageBox.Show("Are you sure you want to update this item?", "Confirm Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirmResult == DialogResult.Yes)
+            {
+                string query = "UPDATE Inventory SET [Item Name] = @n, Quantity = @q, Unit = @u, Category = @c, [Date of Stock] = @ds, [Expiration Date] = @ed, [Unit Price] = @up, Expenses = @e WHERE [Item ID] = @id";
+
+                try
+                {
+                    using (OleDbCommand cmd = new OleDbCommand(query, conn))
+                    {
+                        cmd.Parameters.Add("@n", OleDbType.VarChar).Value = tbName.Text;
+                        cmd.Parameters.Add("@q", OleDbType.Integer).Value = quantity;
+                        cmd.Parameters.Add("@u", OleDbType.VarChar).Value = cbUnit.Text;
+                        cmd.Parameters.Add("@c", OleDbType.VarChar).Value = cbCategory.Text;
+                        cmd.Parameters.Add("@ds", OleDbType.Date).Value = dtpDOS.Value.Date;
+                        cmd.Parameters.Add("@ed", OleDbType.Date).Value = dtpED.Value.Date;
+                        cmd.Parameters.Add("@up", OleDbType.Decimal).Value = unitPrice;
+                        cmd.Parameters.Add("@e", OleDbType.Decimal).Value = expenses;
+                        cmd.Parameters.Add("@id", OleDbType.Integer).Value = itemId;
+
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                        MessageBox.Show("Item updated successfully!");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"An error occurred: {ex.Message}", "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                finally
+                {
+                    if (conn.State == ConnectionState.Open)
+                        conn.Close();
+                }
+
+                GetUsers();
+            }
+        }
+
+
+
+
+        private void Inventory_Load(object sender, EventArgs e)
+        {
+            cbUnit.Items.Clear();
+            cbCategory.Items.Clear();
+
+            cbUnit.Items.Add("kg");
+            cbUnit.Items.Add("grams");
+            cbUnit.Items.Add("ml");
+            cbUnit.Items.Add("liters");
+            cbUnit.Items.Add("Pieces");
+
+
+            cbCategory.Items.Add("Items");
+            cbCategory.Items.Add("Liquids");
+            cbCategory.Items.Add("Solid");
+            cbCategory.Items.Add("Container");
+            cbCategory.Items.Add("Dry goods");
+
+            tbUnitPrice.TextChanged += tbUnitPrice_TextChanged;
+            tbQuantity.TextChanged += tbQuantity_TextChanged;
+
+            GetUsers();
+        }        
+
+        private void dgvUser_CellEnter(object sender, DataGridViewCellEventArgs e)
+        {
+            if (dgvUser.CurrentRow != null)
+            {
+                tbName.Text = dgvUser.CurrentRow.Cells["Item Name"].Value?.ToString() ?? string.Empty;
+                tbQuantity.Text = dgvUser.CurrentRow.Cells["Quantity"].Value?.ToString() ?? string.Empty;
+                tbUnitPrice.Text = dgvUser.CurrentRow.Cells["Unit Price"].Value?.ToString() ?? string.Empty;
+                cbUnit.Text = dgvUser.CurrentRow.Cells["Unit"].Value?.ToString() ?? string.Empty;
+                cbCategory.Text = dgvUser.CurrentRow.Cells["Category"].Value?.ToString() ?? string.Empty;
+
+                dtpDOS.Value = dgvUser.CurrentRow.Cells["Date of Stock"].Value != DBNull.Value
+                    ? Convert.ToDateTime(dgvUser.CurrentRow.Cells["Date of Stock"].Value)
+                    : DateTime.Now;
+
+                dtpED.Value = dgvUser.CurrentRow.Cells["Expiration Date"].Value != DBNull.Value
+                    ? Convert.ToDateTime(dgvUser.CurrentRow.Cells["Expiration Date"].Value)
+                    : DateTime.Now;
+            }
+        }
+
+        private void tbS_TextChanged(object sender, EventArgs e)
+        {
+            
+            string searchQuery = "SELECT * FROM Inventory WHERE [Item Name] LIKE @searchTerm";
+
+            
+            adapter = new OleDbDataAdapter(searchQuery, conn);
+
+            
+            adapter.SelectCommand.Parameters.AddWithValue("@searchTerm", tbS.Text + "%");
+
+            dt = new DataTable(); 
+
+            try
+            {
+                
+                conn.Open();
+                adapter.Fill(dt);
+                dgvUser.DataSource = dt; 
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error: {ex.Message}", "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                if (conn.State == ConnectionState.Open)
+                    conn.Close();
+            }
+        }
+
+
+        private decimal CalculateExpenses()
+        {
+            if (decimal.TryParse(tbUnitPrice.Text, out decimal unitPrice) && int.TryParse(tbQuantity.Text, out int quantity))
+            {
+                return unitPrice * quantity;
+            }
+            return 0;
+        }
+        
+        private void tbUnitPrice_TextChanged(object sender, EventArgs e)
+        {
+            CalculateExpenses();
+        } 
+
+        private void tbQuantity_TextChanged(object sender, EventArgs e)
+        {
+            CalculateExpenses();
+        }
+    }
+}
