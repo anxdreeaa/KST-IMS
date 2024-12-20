@@ -1,0 +1,113 @@
+using LoginPanel.Properties;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Data.OleDb;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
+
+namespace LoginPanel
+{
+    public partial class Form1 : Form
+    {
+        private OleDbConnection conn;
+        private int loginAttempts = 1;
+        private const int maxLoginAttempts = 3;
+        
+
+        public Form1()
+        {
+            InitializeComponent();
+            conn = new OleDbConnection(@"Provider=Microsoft.ACE.OLEDB.12.0;Data Source=KST IMS DATABASE.accdb;");
+        }
+
+        private void btnLogin_Click(object sender, EventArgs e)
+        {
+            string username = tbUsername.Text.Trim();
+            string password = tbPassword.Text.Trim();
+
+            if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+            {
+                MessageBox.Show("Please enter both username and password.");
+                return;
+            }
+
+            try
+            {
+                conn.Open();
+
+                string query = "SELECT ID, [Type] FROM UserAcc WHERE Username = @username AND Password = @password";
+                OleDbCommand cmd = new OleDbCommand(query, conn);
+
+                cmd.Parameters.AddWithValue("@username", username);
+                cmd.Parameters.AddWithValue("@password", password);
+
+                OleDbDataReader reader = cmd.ExecuteReader();
+
+                if (reader.Read())
+                {
+                    int userId = reader.GetInt32(0);
+                    string userType = reader.GetString(1);
+
+                    reader.Close();
+
+                    string formattedTimeIn = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
+                    string insertLogQuery = "INSERT INTO LogTable (ID, TimeIn) VALUES (@userId, @timeIn)";
+                    OleDbCommand insertCmd = new OleDbCommand(insertLogQuery, conn);
+
+                    insertCmd.Parameters.AddWithValue("@userId", userId);
+                    insertCmd.Parameters.AddWithValue("@timeIn", formattedTimeIn);
+
+                    insertCmd.ExecuteNonQuery();
+                    MessageBox.Show("Login Successfully");
+
+                    if (userType == "Admin")
+                    {
+                        Admin adminForm = new Admin(userId);
+                        adminForm.Show();
+                    }
+                    else if (userType == "Staff")
+                    {
+                        Staff staffForm = new Staff(userId);
+                        staffForm.Show();
+                    }
+                    else
+                    {
+                        MessageBox.Show("Unrecognized user role. Please contact the administrator.");
+                        return;
+                    }
+
+                    this.Hide();
+                }
+                else
+                {
+                    loginAttempts++;
+                    MessageBox.Show("Invalid username or password.");
+
+                    if (loginAttempts >= maxLoginAttempts)
+                    {
+                        MessageBox.Show("Too many failed login attempts. The application will now close.");
+                        this.Close();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"An error occurred: {ex.Message}");
+            }
+            finally
+            {
+                if (conn.State == ConnectionState.Open)
+                {
+                    conn.Close();
+                }
+            }
+        }
+    }
+}
