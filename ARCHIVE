@@ -1,0 +1,209 @@
+using System;
+using System.Data;
+using System.Data.OleDb;
+using System.Windows.Forms;
+
+namespace LoginPanel
+{
+    public partial class Archive : Form
+    {
+        private OleDbConnection conn;
+        private string connectionString = @"Provider=Microsoft.ACE.OLEDB.12.0;Data Source=KST IMS DATABASE.accdb";
+        private DataTable dt;
+
+        public Archive(string v)
+        {
+            InitializeComponent();
+            conn = new OleDbConnection(connectionString);
+        }
+
+        private void LoadArchivedProducts()
+        {
+            string query = "SELECT * FROM Archive ORDER BY [Deleted Time] DESC";
+
+            try
+            {
+                conn.Open();
+                using (OleDbDataAdapter adapter = new OleDbDataAdapter(query, conn))
+                {
+                    dt = new DataTable();
+                    adapter.Fill(dt);
+
+                    dgvArchive.DataSource = dt;
+                    dgvArchive.Refresh();
+                }
+
+                foreach (DataGridViewColumn column in dgvArchive.Columns)
+                {
+                    column.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error loading archive: {ex.Message}", "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                conn.Close();
+            }
+        }
+
+        private void LoadDeletedProducts()
+        {
+            string query = "SELECT * FROM ProductArchive ORDER BY [Deleted Time] DESC";
+
+            try
+            {
+                conn.Open();
+                using (OleDbDataAdapter adapter = new OleDbDataAdapter(query, conn))
+                {
+                    dt = new DataTable();
+                    adapter.Fill(dt);
+
+                    dgvProductArchive.DataSource = dt;
+                    dgvProductArchive.Refresh();
+                }
+
+                foreach (DataGridViewColumn column in dgvProductArchive.Columns)
+                {
+                    column.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error loading deleted products: {ex.Message}", "Database Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                conn.Close();
+            }
+        }
+
+        public void RefreshArchive()
+        {
+            LoadArchivedProducts();
+            LoadDeletedProducts();
+        }
+
+        private void Archive_Load(object sender, EventArgs e)
+        {
+            LoadArchivedProducts();
+            LoadDeletedProducts();
+        }
+
+        private void btnRestoreArchive_Click(object sender, EventArgs e)
+        {
+            if (dgvArchive.CurrentRow == null)
+            {
+                MessageBox.Show("Please select an archived product to restore.", "Restore Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int itemId = Convert.ToInt32(dgvArchive.CurrentRow.Cells["Item ID"].Value);
+            string itemName = dgvArchive.CurrentRow.Cells["Item Name"].Value.ToString();
+            int quantity = Convert.ToInt32(dgvArchive.CurrentRow.Cells["Quantity"].Value);
+            string unit = dgvArchive.CurrentRow.Cells["Unit"].Value.ToString();
+            string category = dgvArchive.CurrentRow.Cells["Category"].Value.ToString();
+            DateTime dateOfStock = Convert.ToDateTime(dgvArchive.CurrentRow.Cells["Date of Stock"].Value);
+            DateTime expirationDate = Convert.ToDateTime(dgvArchive.CurrentRow.Cells["Expiration Date"].Value);
+            decimal unitPrice = Convert.ToDecimal(dgvArchive.CurrentRow.Cells["Unit Price"].Value);
+            decimal expenses = Convert.ToDecimal(dgvArchive.CurrentRow.Cells["Expenses"].Value);
+
+            var confirmResult = MessageBox.Show("Are you sure you want to restore this archived product?", "Confirm Restore", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirmResult == DialogResult.Yes)
+            {
+                string insertProductQuery = "INSERT INTO Inventory ([Item ID], [Item Name], [Quantity], [Unit], [Category], [Date of Stock], [Expiration Date], [Unit Price], [Expenses]) " +
+                                            "VALUES (@itemId, @itemName, @quantity, @unit, @category, @dateOfStock, @expirationDate, @unitPrice, @expenses)";
+
+                string deleteFromArchiveQuery = "DELETE FROM Archive WHERE [Item ID] = @itemId";
+
+                using (OleDbConnection conn = new OleDbConnection(connectionString))
+                {
+                    try
+                    {
+                        conn.Open();
+
+                        using (OleDbCommand insertProductCmd = new OleDbCommand(insertProductQuery, conn))
+                        using (OleDbCommand deleteCmd = new OleDbCommand(deleteFromArchiveQuery, conn))
+                        {
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@itemId", OleDbType.Integer) { Value = itemId });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@itemName", OleDbType.VarChar) { Value = itemName });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@quantity", OleDbType.Integer) { Value = quantity });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@unit", OleDbType.VarChar) { Value = unit });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@category", OleDbType.VarChar) { Value = category });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@dateOfStock", OleDbType.Date) { Value = dateOfStock });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@expirationDate", OleDbType.Date) { Value = expirationDate });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@unitPrice", OleDbType.Currency) { Value = unitPrice });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@expenses", OleDbType.Currency) { Value = expenses });
+
+                            insertProductCmd.ExecuteNonQuery();
+
+                            deleteCmd.Parameters.Add(new OleDbParameter("@itemId", OleDbType.Integer) { Value = itemId });
+                            deleteCmd.ExecuteNonQuery();
+
+                            MessageBox.Show("Product restored from Archive successfully!");
+
+                            RefreshArchive();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Error restoring product: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        private void btnRestoreDeletedProducts_Click(object sender, EventArgs e)
+        {
+            if (dgvProductArchive.CurrentRow == null)
+            {
+                MessageBox.Show("Please select a deleted product to restore.", "Restore Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int productId = Convert.ToInt32(dgvProductArchive.CurrentRow.Cells["ProductID"].Value);
+            string productName = dgvProductArchive.CurrentRow.Cells["Product Name"].Value.ToString();
+            int quantity = Convert.ToInt32(dgvProductArchive.CurrentRow.Cells["Quantity"].Value);
+            DateTime deletedTime = Convert.ToDateTime(dgvProductArchive.CurrentRow.Cells["Deleted Time"].Value);
+
+            var confirmResult = MessageBox.Show("Are you sure you want to restore this deleted product?", "Confirm Restore", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirmResult == DialogResult.Yes)
+            {
+                string insertProductQuery = "INSERT INTO Products ([ProductID], [Product Name], [Quantity]) " +
+                                            "VALUES (@productId, @productName, @quantity)";
+
+                string deleteFromProductArchiveQuery = "DELETE FROM ProductArchive WHERE [ProductID] = @productId";
+
+                using (OleDbConnection conn = new OleDbConnection(connectionString))
+                {
+                    try
+                    {
+                        conn.Open();
+
+                        using (OleDbCommand insertProductCmd = new OleDbCommand(insertProductQuery, conn))
+                        using (OleDbCommand deleteCmd = new OleDbCommand(deleteFromProductArchiveQuery, conn))
+                        {
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@productId", OleDbType.Integer) { Value = productId });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@productName", OleDbType.VarChar) { Value = productName });
+                            insertProductCmd.Parameters.Add(new OleDbParameter("@quantity", OleDbType.Integer) { Value = quantity });
+
+                            insertProductCmd.ExecuteNonQuery();
+
+                            deleteCmd.Parameters.Add(new OleDbParameter("@productId", OleDbType.Integer) { Value = productId });
+                            deleteCmd.ExecuteNonQuery();
+
+                            MessageBox.Show("Product restored from ProductArchive successfully!");
+
+                            RefreshArchive();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Error restoring deleted product: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+    }
+}
