@@ -1,0 +1,144 @@
+using System;
+using System.Data;
+using System.Data.OleDb;
+using System.Windows.Forms;
+
+namespace LoginPanel
+{
+    public partial class ProductForm : Form
+    {
+        private string connectionString = @"Provider=Microsoft.ACE.OLEDB.12.0;Data Source=KST IMS DATABASE.accdb;";
+
+        public event EventHandler ProductAdded;
+
+        public ProductForm()
+        {
+            InitializeComponent();
+        }
+
+        private void btnSave_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                DialogResult confirmSave = MessageBox.Show("Are you sure you want to save this product?", "Confirm Save", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (confirmSave == DialogResult.No)
+                {
+                    return;
+                }
+
+                using (OleDbConnection connection = new OleDbConnection(connectionString))
+                {
+                    connection.Open();
+                    OleDbTransaction transaction = connection.BeginTransaction();
+
+                    try
+                    {
+                        string productName = tbProductName.Text.Trim();
+
+                        if (string.IsNullOrEmpty(productName))
+                        {
+                            MessageBox.Show("Please enter a Product Name.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return;
+                        }
+
+                        string insertProductQuery = "INSERT INTO Products ([Product Name]) VALUES (@ProductName)";
+                        OleDbCommand cmdProduct = new OleDbCommand(insertProductQuery, connection, transaction);
+                        cmdProduct.Parameters.AddWithValue("@ProductName", productName);
+                        cmdProduct.ExecuteNonQuery();
+
+                        string getProductIDQuery = "SELECT @@IDENTITY";
+                        OleDbCommand cmdGetID = new OleDbCommand(getProductIDQuery, connection, transaction);
+                        int productID = Convert.ToInt32(cmdGetID.ExecuteScalar());
+
+                        for (int i = 1; i <= 5; i++)
+                        {
+                            string itemName = Controls[$"tbName{i}"].Text.Trim();
+                            string itemQuantityText = Controls[$"tbQuantity{i}"].Text.Trim();
+
+                            if (i == 1 && (string.IsNullOrEmpty(itemName) || string.IsNullOrEmpty(itemQuantityText)))
+                            {
+                                MessageBox.Show($"Item Name and Item Quantity for Raw Material {i} cannot be empty.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                return;
+                            }
+
+                            if (i != 1 && string.IsNullOrEmpty(itemName) && string.IsNullOrEmpty(itemQuantityText))
+                            {
+                                continue;
+                            }
+
+                            int itemQuantity = 0;
+                            if (!string.IsNullOrEmpty(itemQuantityText))
+                            {
+                                if (!int.TryParse(itemQuantityText, out itemQuantity) || itemQuantity <= 0)
+                                {
+                                    MessageBox.Show($"Invalid or empty quantity for Raw Material {i}. Quantity must be a positive number.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                    return;
+                                }
+                            }
+
+                            if (!string.IsNullOrEmpty(itemName))
+                            {
+                                string getItemIDQuery = "SELECT [Item ID] FROM Inventory WHERE [Item Name] = @ItemName";
+                                OleDbCommand cmdGetItemID = new OleDbCommand(getItemIDQuery, connection, transaction);
+                                cmdGetItemID.Parameters.AddWithValue("@ItemName", itemName);
+
+                                object itemIDObj = cmdGetItemID.ExecuteScalar();
+                                if (itemIDObj != null)
+                                {
+                                    int itemID = Convert.ToInt32(itemIDObj);
+
+                                    string insertProductRawQuery = "INSERT INTO ProductRaw (ProductID, ItemID, ItemName, QuantityRequired) " +
+                                                                   "VALUES (@ProductID, @ItemID, @ItemName, @QuantityRequired)";
+                                    OleDbCommand cmdProductRaw = new OleDbCommand(insertProductRawQuery, connection, transaction);
+                                    cmdProductRaw.Parameters.AddWithValue("@ProductID", productID);
+                                    cmdProductRaw.Parameters.AddWithValue("@ItemID", itemID);
+                                    cmdProductRaw.Parameters.AddWithValue("@ItemName", itemName);
+                                    cmdProductRaw.Parameters.AddWithValue("@QuantityRequired", itemQuantity);
+                                    cmdProductRaw.ExecuteNonQuery();
+                                }
+                                else
+                                {
+                                    MessageBox.Show($"Item '{itemName}' does not exist in Inventory. Please check the inventory and try again.", "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                    return;
+                                }
+                            }
+                        }
+
+                        transaction.Commit();
+                        OnProductAdded(EventArgs.Empty);
+                        MessageBox.Show("Product and valid raw materials saved successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        this.Close();
+                    }
+                    catch (Exception ex)
+                    {
+                        transaction.Rollback();
+                        MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        protected virtual void OnProductAdded(EventArgs e)
+        {
+            ProductAdded?.Invoke(this, e);
+        }
+
+        private void btnCancel_Click(object sender, EventArgs e)
+        {
+            DialogResult confirmCancel = MessageBox.Show(
+                "Are you sure you want to cancel?",
+                "Confirm Cancel",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (confirmCancel == DialogResult.Yes)
+            {
+                this.Close();
+            }
+        }
+    }
+}
