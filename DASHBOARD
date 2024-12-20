@@ -1,0 +1,182 @@
+using System;
+using System.Data;
+using System.Data.OleDb;
+using System.Drawing;
+using System.Drawing.Printing;
+using System.Windows.Forms;
+
+namespace LoginPanel
+{
+    public partial class Dashboard1 : Form
+    {
+        private OleDbConnection conn;
+        private string connectionString = @"Provider=Microsoft.ACE.OLEDB.12.0;Data Source=KST IMS DATABASE.accdb";
+        private string currentUser;
+        private DataGridView currentGridToPrint;
+        private int pageNumber = 1;
+
+        public Dashboard1(string Username)
+        {
+            InitializeComponent();
+            this.currentUser = Username;
+            conn = new OleDbConnection(connectionString);
+        }
+
+        private void Dashboard1_Load(object sender, EventArgs e)
+        {
+            PopulateDataGrids();             
+        }
+
+        private void PopulateDataGrids()
+        {
+            PopulateLowStockGrid();
+            PopulateOutOfStockGrid();
+        }
+
+        private void PopulateLowStockGrid()
+        {
+            string query = "SELECT * FROM Inventory WHERE Quantity > 0 AND Quantity < 3";
+
+            using (OleDbConnection conn = new OleDbConnection(connectionString))
+            {
+                OleDbDataAdapter dataAdapter = new OleDbDataAdapter(query, conn);
+                DataTable dataTable = new DataTable();
+
+                try
+                {
+                    conn.Open();
+                    dataAdapter.Fill(dataTable);
+                    dgvLowStock.DataSource = dataTable;
+                    dgvLowStock.Refresh();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Error: " + ex.Message);
+                }
+            }
+        }
+
+        private void PopulateOutOfStockGrid()
+        {
+            string query = "SELECT * FROM Inventory WHERE Quantity = 0";
+
+            using (OleDbConnection conn = new OleDbConnection(connectionString))
+            {
+                OleDbDataAdapter dataAdapter = new OleDbDataAdapter(query, conn);
+                DataTable dataTable = new DataTable();
+
+                try
+                {
+                    conn.Open();
+                    dataAdapter.Fill(dataTable);
+                    dgvOutofStock.DataSource = dataTable;
+                    dgvOutofStock.Refresh();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Error: " + ex.Message);
+                }
+            }
+        }        
+
+
+        private void btnPrintOut_Click(object sender, EventArgs e)
+        {
+            currentGridToPrint = dgvOutofStock;
+            ShowPrintPreview();
+        }
+
+        private void btnPrintLow_Click(object sender, EventArgs e)
+        {
+            currentGridToPrint = dgvLowStock;
+            ShowPrintPreview();
+        }       
+
+        private void ShowPrintPreview()
+        {
+            pageNumber = 1;
+
+            string gridTitle = currentGridToPrint == dgvOutofStock
+                ? "Out of Stock Items"
+                : currentGridToPrint == dgvLowStock
+                    ? "Low Stock Items"
+                    : "Most Stocked Items";
+
+            PrintPreviewDialog printPreviewDialog = new PrintPreviewDialog
+            {
+                Text = "Print Preview - " + gridTitle
+            };
+
+            PrintDocument printDocument = new PrintDocument();
+            printDocument.DefaultPageSettings.Landscape = true;
+            printDocument.PrintPage += PrintDocument_PrintPage;
+            printPreviewDialog.Document = printDocument;
+            printPreviewDialog.ShowDialog();
+        }
+
+        private void PrintDocument_PrintPage(object sender, PrintPageEventArgs e)
+        {
+            if (currentGridToPrint == null) return;
+
+            Font titleFont = new Font("Arial", 14, FontStyle.Bold);
+            Font headerFont = new Font("Arial", 10, FontStyle.Bold);
+            Font cellFont = new Font("Arial", 9);
+            Font footerFont = new Font("Arial", 8);
+            Brush brush = Brushes.Black;
+
+            float x = e.MarginBounds.Left;
+            float y = e.MarginBounds.Top;
+
+            
+            string title = currentGridToPrint == dgvOutofStock
+                ? "Out of Stock Items"
+                : currentGridToPrint == dgvLowStock
+                    ? "Low Stock Items"
+                    : "Most Stocked Items";
+
+            e.Graphics.DrawString(title, titleFont, brush, x, y);
+            y += titleFont.GetHeight() + 10;
+
+            
+            string userName = "User: " + currentUser;
+            string printDate = "Printed on: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            e.Graphics.DrawString(userName, footerFont, brush, x, y);
+            y += footerFont.GetHeight();
+            e.Graphics.DrawString(printDate, footerFont, brush, x, y);
+            y += footerFont.GetHeight() + 10;
+
+            
+            float columnWidth = (e.MarginBounds.Right - e.MarginBounds.Left) / currentGridToPrint.Columns.Count;
+            foreach (DataGridViewColumn column in currentGridToPrint.Columns)
+            {
+                e.Graphics.DrawString(column.HeaderText, headerFont, brush, x, y);
+                x += columnWidth;
+            }
+            y += headerFont.GetHeight() + 5;
+
+            
+            foreach (DataGridViewRow row in currentGridToPrint.Rows)
+            {
+                x = e.MarginBounds.Left;
+                foreach (DataGridViewCell cell in row.Cells)
+                {
+                    e.Graphics.DrawString(cell.Value?.ToString() ?? "", cellFont, brush, x, y);
+                    x += columnWidth;
+                }
+                y += cellFont.GetHeight() + 4;
+
+                if (y + cellFont.GetHeight() > e.MarginBounds.Bottom)
+                {
+                    e.HasMorePages = true;
+                    pageNumber++;
+                    return;
+                }
+            }
+
+            
+            y += 10;
+            e.Graphics.DrawString("Page " + pageNumber, footerFont, brush, e.MarginBounds.Right - 50, e.MarginBounds.Bottom + 20);
+            e.HasMorePages = false;
+        }
+    }
+}
