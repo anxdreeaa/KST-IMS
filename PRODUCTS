@@ -1,0 +1,274 @@
+using System;
+using System.Data;
+using System.Data.OleDb;
+using System.Windows.Forms;
+
+namespace LoginPanel
+{
+    public partial class Products : Form
+    {
+        private OleDbConnection conn;
+        private string connectionString = @"Provider=Microsoft.ACE.OLEDB.12.0;Data Source=KST IMS DATABASE.accdb";
+        private DataTable productsTable = new DataTable(); 
+        private DataTable dt;
+        private DataTable archiveTable = new DataTable(); 
+        private System.Windows.Forms.DataGridView dgvProductArchive;
+
+        public Products()
+        {
+            InitializeComponent();
+            this.Load += new EventHandler(this.Products_Load);
+            this.dgvProductArchive = new System.Windows.Forms.DataGridView();
+        }
+
+        private void LoadProductsData()
+        {
+            string query = "SELECT * FROM Products";
+
+            using (OleDbConnection connection = new OleDbConnection(connectionString))
+            {
+                try
+                {
+                    connection.Open();
+                    OleDbDataAdapter dataAdapter = new OleDbDataAdapter(query, connection);
+
+                    productsTable.Clear();
+                    dataAdapter.Fill(productsTable); 
+                    dgvProducts.DataSource = productsTable;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Error loading data: " + ex.Message);
+                }
+            }
+        }
+
+        public void LoadProductArchiveData()
+        {
+            string query = "SELECT * FROM ProductArchive";
+
+            using (OleDbConnection connection = new OleDbConnection(connectionString))
+            {
+                try
+                {
+                    connection.Open();
+                    OleDbDataAdapter dataAdapter = new OleDbDataAdapter(query, connection);
+                    DataTable archiveTable = new DataTable();
+                    dataAdapter.Fill(archiveTable);
+                    dgvProductArchive.DataSource = archiveTable;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Error loading product archive data: " + ex.Message);
+                }
+            }
+        }
+
+        private void Products_Load(object sender, EventArgs e)
+        {
+            LoadProductsData();
+            LoadProductArchiveData();
+        }
+
+        private void tbProductName_TextChanged(object sender, EventArgs e)
+        {
+            string searchText = tbProductName.Text.ToLower();
+            DataView filteredView = new DataView(productsTable);
+            filteredView.RowFilter = $"[Product Name] LIKE '%{searchText}%'";
+            dgvProducts.DataSource = filteredView;
+        }
+
+        private void btnUpdate_Click(object sender, EventArgs e)
+        {
+            if (dgvProducts.CurrentRow != null && int.TryParse(tbQuantity.Text, out int newQuantity))
+            {
+                int productId = Convert.ToInt32(dgvProducts.CurrentRow.Cells["ProductID"].Value);
+                int currentQuantity = Convert.ToInt32(dgvProducts.CurrentRow.Cells["Quantity"].Value);
+                int quantityDifference = newQuantity - currentQuantity;
+
+                if (quantityDifference == 0)
+                {
+                    MessageBox.Show("No change in product quantity.");
+                    return;
+                }
+
+                using (OleDbConnection conn = new OleDbConnection(connectionString))
+                {
+                    conn.Open();
+                    OleDbTransaction transaction = conn.BeginTransaction();
+
+                    try
+                    {
+                        if (quantityDifference < 0)
+                        {
+                            string getRawMaterialsQuery = "SELECT ItemName, QuantityRequired FROM ProductRaw WHERE ProductID = @productId";
+                            using (OleDbCommand getRawCmd = new OleDbCommand(getRawMaterialsQuery, conn, transaction))
+                            {
+                                getRawCmd.Parameters.AddWithValue("@productId", productId);
+
+                                using (OleDbDataReader reader = getRawCmd.ExecuteReader())
+                                {
+                                    while (reader.Read())
+                                    {
+                                        string itemName = reader["ItemName"].ToString();
+                                        int quantityRequired = Convert.ToInt32(reader["QuantityRequired"]);
+                                        int totalRawMaterialChange = quantityRequired * quantityDifference;
+
+                                        if (totalRawMaterialChange < 0)
+                                        {
+                                            string checkInventoryQuery = "SELECT Quantity FROM Inventory WHERE [Item Name] = @itemName";
+                                            using (OleDbCommand checkInventoryCmd = new OleDbCommand(checkInventoryQuery, conn, transaction))
+                                            {
+                                                checkInventoryCmd.Parameters.AddWithValue("@itemName", itemName);
+                                                int inventoryQuantity = Convert.ToInt32(checkInventoryCmd.ExecuteScalar());
+
+                                                if (inventoryQuantity < Math.Abs(totalRawMaterialChange))
+                                                {
+                                                    MessageBox.Show($"Insufficient stock for {itemName}. Cannot update product quantity.");
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        string updateProductQuery = "UPDATE Products SET [Quantity] = @newQuantity WHERE [ProductID] = @productId";
+                        using (OleDbCommand updateCmd = new OleDbCommand(updateProductQuery, conn, transaction))
+                        {
+                            updateCmd.Parameters.AddWithValue("@newQuantity", newQuantity);
+                            updateCmd.Parameters.AddWithValue("@productId", productId);
+                            updateCmd.ExecuteNonQuery();
+                        }
+
+                        if (quantityDifference < 0)
+                        {
+                            string getRawMaterialsQuery2 = "SELECT ItemName, QuantityRequired FROM ProductRaw WHERE ProductID = @productId";
+                            using (OleDbCommand getRawCmd2 = new OleDbCommand(getRawMaterialsQuery2, conn, transaction))
+                            {
+                                getRawCmd2.Parameters.AddWithValue("@productId", productId);
+
+                                using (OleDbDataReader reader = getRawCmd2.ExecuteReader())
+                                {
+                                    while (reader.Read())
+                                    {
+                                        string itemName = reader["ItemName"].ToString();
+                                        int quantityRequired = Convert.ToInt32(reader["QuantityRequired"]);
+                                        int totalRawMaterialChange = quantityRequired * quantityDifference;
+
+                                        if (totalRawMaterialChange != 0)
+                                        {
+                                            string updateInventoryQuery = "UPDATE Inventory SET [Quantity] = [Quantity] + @quantityChange WHERE [Item Name] = @itemName";
+                                            using (OleDbCommand updateInventoryCmd = new OleDbCommand(updateInventoryQuery, conn, transaction))
+                                            {
+                                                updateInventoryCmd.Parameters.AddWithValue("@quantityChange", totalRawMaterialChange);
+                                                updateInventoryCmd.Parameters.AddWithValue("@itemName", itemName);
+                                                updateInventoryCmd.ExecuteNonQuery();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        transaction.Commit();
+                        MessageBox.Show("Product quantity updated successfully!");
+                        LoadProductsData();
+                    }
+                    catch (Exception ex)
+                    {
+                        transaction.Rollback();
+                        MessageBox.Show("Error: " + ex.Message, "Transaction Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+            else
+            {
+                MessageBox.Show("Invalid quantity or no product selected.");
+            }
+        }
+
+        private void btnAddProduct_Click(object sender, EventArgs e)
+        {
+            ProductForm pf = new ProductForm();
+            pf.ProductAdded += ProductForm_ProductAdded;
+            pf.ShowDialog();
+        }
+
+        private void ProductForm_ProductAdded(object sender, EventArgs e)
+        {
+            LoadProductsData();
+        }
+
+        private void btnDeleteProduct_Click(object sender, EventArgs e)
+        {
+            if (dgvProducts.CurrentRow == null)
+            {
+                MessageBox.Show("Please select a product to delete.", "Delete Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int productId = Convert.ToInt32(dgvProducts.CurrentRow.Cells["ProductID"].Value);
+            string productName = dgvProducts.CurrentRow.Cells["Product Name"].Value.ToString();
+            int quantity = Convert.ToInt32(dgvProducts.CurrentRow.Cells["Quantity"].Value);
+
+            var confirmResult = MessageBox.Show("Are you sure you want to delete this product?", "Confirm Delete", MessageBoxButtons.YesNo);
+            if (confirmResult == DialogResult.Yes)
+            {
+                string insertArchiveQuery = "INSERT INTO ProductArchive ([ProductID], [Product Name], [Quantity], [Deleted Time]) VALUES (@productId, @productName, @quantity, @deletedTime)";
+                string deleteFromProductsQuery = "DELETE FROM Products WHERE [ProductID] = @productId";
+
+                using (OleDbConnection conn = new OleDbConnection(connectionString))
+                {
+                    try
+                    {
+                        conn.Open();
+                        OleDbTransaction transaction = conn.BeginTransaction();
+
+                        using (OleDbCommand insertCmd = new OleDbCommand(insertArchiveQuery, conn, transaction))
+                        using (OleDbCommand deleteCmd = new OleDbCommand(deleteFromProductsQuery, conn, transaction))
+                        {
+                            insertCmd.Parameters.Add("@productId", OleDbType.Integer).Value = productId;
+                            insertCmd.Parameters.Add("@productName", OleDbType.VarChar).Value = productName;
+                            insertCmd.Parameters.Add("@quantity", OleDbType.Integer).Value = quantity;
+                            insertCmd.Parameters.Add("@deletedTime", OleDbType.Date).Value = DateTime.Now;
+
+                            insertCmd.ExecuteNonQuery();
+                            deleteCmd.Parameters.Add("@productId", OleDbType.Integer).Value = productId;
+                            deleteCmd.ExecuteNonQuery();
+
+                            transaction.Commit();
+                            MessageBox.Show("Product deleted and archived successfully!");
+                            LoadProductArchiveData();
+                            LoadProductsData();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Error deleting product: " + ex.Message);
+                    }
+                }
+            }
+        }
+
+        private void dgvProducts_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+        }
+
+        private void btnRefresh_Click(object sender, EventArgs e)
+        {
+            LoadProductsData();
+        }
+
+        private void dgvProducts_CellClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex >= 0)
+            {
+                DataGridViewRow selectedRow = dgvProducts.Rows[e.RowIndex];
+                tbProductName.Text = selectedRow.Cells["Product Name"].Value.ToString();
+                tbQuantity.Text = selectedRow.Cells["Quantity"].Value.ToString();
+            }
+        }
+    }
+}
